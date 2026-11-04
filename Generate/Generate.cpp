@@ -4,6 +4,7 @@
 #include "../myMat.h"
 #include <iostream>
 #include <fstream>
+#include <cstring> // 用于字符串比较
 using namespace std;
 
 static void Usage() {

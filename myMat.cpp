@@ -1,13 +1,10 @@
 ﻿#include "myMat.h"
-#include <cstddef> // 用于 size_t
-#include <cstdlib> // 用于内存分配和释放
 #include <fstream>
 
 #include <random> // 用于生成随机数
 #include "./Generate/progress_bar.h"
 
 #include <omp.h> // 乘积函数可能需要并行化
-
 
 using namespace std;
 
@@ -171,10 +168,10 @@ int MultiplyMat(const Mat* left, const Mat* right, Mat* result)
         return 0;
 
     //开始计算矩阵乘法
-    //#pragma omp parallel for
+    #pragma omp parallel for
     for (int i = 0; i < left->H; i++) {
         if (i == 0) // 在第一行输出线程数，便于调试和性能分析
-			cout << "Using " << omp_get_max_threads() << " threads for multiplication." << endl;
+			cout << "Using " << omp_get_num_threads() << " threads for multiplication." << endl;
         for (int j = 0; j < rightT.H; j++) {
             float sum = 0.0;
             for (int k = 0; k < left->W; k++) {

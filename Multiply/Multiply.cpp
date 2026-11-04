@@ -1,18 +1,21 @@
 ﻿
 #include "../myMat.h"
 #include <chrono> // 计时
+#include <fstream>
+
+#include <mpi.h>
 
 using namespace std;
 
 /* 输出用法 */
-static void Usage(FILE* output)
+static void Usage()
 {
-    fprintf(output, "Usage: ./Multiply --pathA <matrix_a> --pathB <matrix_b> [--pathC <output_file>]\n");
-    fprintf(output, "       ./Multiply -h|--help\n");
-    fprintf(output, "Reads A and B from the given text files; --pathC defaults to C.txt.\n");
-    fprintf(output, "Generate and save A/B beforehand with Mat_Generator/Mat_Generator.cpp.\n");
-    fprintf(output, "Files start with H W and then rows.\n");
-    fprintf(output, "Example: ./Multiply --pathA A.bin --pathB B.bin --pathC C.txt\n");
+    cout<<"Usage: ./Multiply --pathA <matrix_a> --pathB <matrix_b> [--pathC <output_file>]"<<endl;
+    cout<<"       ./Multiply -h|--help"<<endl;
+    cout<<"Reads A and B from the given text files; --pathC defaults to C.txt."<<endl;
+    cout<<"Generate and save A/B beforehand with Mat_Generator/Mat_Generator.cpp."<<endl;
+    cout<<"Files start with H W and then rows."<<endl;
+    cout<<"Example: ./Multiply --pathA A.bin --pathB B.bin --pathC C.txt"<<endl;
 }
 
 // 解析命令行参数，读取输入矩阵并分配结果矩阵
@@ -23,14 +26,19 @@ bool Write_to_txt(const char* path, Mat result);
 
 int main(int argc, char** argv)
 {
+	// MPI 初始化
+	int rank, size;
+	MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
     const char* pathA = NULL; // 由 --pathA 指定
     const char* pathB = NULL; // 由 --pathB 指定
     const char* pathC = "C.txt"; // 默认输出文件路径
 
-    FILE* output = NULL; // 用于写入结果矩阵的文件指针
     Mat left, right, result; // 定义三个矩阵结构体，分别用于存储左矩阵、右矩阵和结果矩阵
     const char* error = NULL; // 用于存储错误信息
-    int status = 1;
+    int status = 0;
 
     // 初始化矩阵
     InitMat(&left);
@@ -57,6 +65,12 @@ int main(int argc, char** argv)
 		goto cleanup;
     }
 
+    // 为result矩阵分配空间
+    if (!AllocMat(&result, left.H, right.W)) {
+        cerr << "error: failed to allocate memory for result matrix " << left.H << "x" << right.W << endl;
+        goto cleanup;
+    }
+
     // 执行矩阵乘法并计时；计时变量放在独立作用域，避免 goto cleanup 跨过初始化
     {
 		cout << "Multiplying matrix A (" << left.H << "x" << left.W << ") by matrix B (" << right.H << "x" << right.W << ") ...\n"; 
@@ -68,20 +82,20 @@ int main(int argc, char** argv)
 
     }
 
+	// 将结果矩阵写入指定路径的txt文件；若失败则输出错误信息并跳转到清理环节。
+	if (!Write_to_txt(pathC, result)) {
+		cerr << "error: failed to write result matrix to " << pathC << endl;
+		goto cleanup;
+	}
+	status = 1; // 成功执行到此处，设置状态码为1表示成功
+
 
 cleanup: // 清理资源环节，确保无论成功还是失败都能释放内存和关闭文件
-    /* 统一关闭输出并释放三个矩阵，避免各个失败出口重复清理。 */
-    if (output != NULL) {
-        if (fclose(output) != 0) {
-            error = "output failed";
-            status = 1;
-        }
-        output = NULL;
-    }
+    /* 统一释放三个矩阵，避免各个失败出口重复清理。 */
     ReleaseMat(&left);
     ReleaseMat(&right);
     ReleaseMat(&result);
-    if (status != 0) {
+    if (status != 1) {
         if (error == NULL)
             error = "unknown error";
         fprintf(stderr, "error: %s\n", error);
@@ -94,7 +108,7 @@ bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, 
     // 处理命令行参数，只接受 --pathA、--pathB、[--pathC] 和 -h/--help
     // 先判断 argc，避免无参数运行时 argv[1] 为 NULL 导致崩溃。
     if (argc <= 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        Usage(stdout);
+        Usage();
         return false;
     }
 
@@ -111,14 +125,14 @@ bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, 
         }
         else {
             fprintf(stderr, "error: invalid argument format\n");
-            Usage(stderr);
+            Usage();
             break;
         }
     }
 
     if (!*pathA || !*pathB) {
         fprintf(stderr, "error: --pathA and --pathB are required\n");
-        Usage(stderr);
+        Usage();
         return false;
     }
 
@@ -133,5 +147,24 @@ bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, 
 
 bool Write_to_txt(const char* path, Mat result)
 {
-    return false;
+	ofstream myout(path, ios::out);
+    
+    if (!myout.is_open()) {
+        cerr << "error: failed to open file " << path << " for writing." << endl;
+        return false;
+    }
+
+    // 写入矩阵的维度
+    myout << result.H << endl << result.W << endl;
+
+    // 写入矩阵的元素
+    for (int i = 0; i < result.H; i++) {
+        for (int j = 0; j < result.W; j++) {
+            myout << result.data[i][j] << " ";
+        }
+        myout << endl;
+    }
+
+    myout.close();
+    return true;
 }
