@@ -426,3 +426,7 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# 个人运行过程中的.bin和.txt文件
+*.txt
+*.bin
