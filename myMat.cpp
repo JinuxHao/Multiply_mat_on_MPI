@@ -168,7 +168,7 @@ int MultiplyMat(const Mat* left, const Mat* right, Mat* result)
         return 0;
 
     //开始计算矩阵乘法
-    #pragma omp parallel for
+    //#pragma omp parallel for
     for (int i = 0; i < left->H; i++) {
         if (i == 0) // 在第一行输出线程数，便于调试和性能分析
 			cout << "Using " << omp_get_num_threads() << " threads for multiplication." << endl;

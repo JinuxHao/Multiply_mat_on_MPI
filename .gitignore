@@ -432,4 +432,5 @@ FodyWeavers.xsd
 *.bin
 *.ps1
 *.sh
+*.csv
 Makefile

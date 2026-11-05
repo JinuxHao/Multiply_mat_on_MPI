@@ -35,7 +35,7 @@ int main(int argc, char** argv)
     Mat left, right, result; // 定义三个矩阵结构体，分别用于存储左矩阵、右矩阵和结果矩阵
     const char* error = NULL; // 用于存储错误信息
     int status = 0;
-    int dims[4] = { 0 }; // 存储
+    //int dims[4] = { 0 }; // 存储
 
     // 初始化矩阵
     InitMat(&left);
