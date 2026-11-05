@@ -430,3 +430,6 @@ FodyWeavers.xsd
 # 个人运行过程中的.bin和.txt文件
 *.txt
 *.bin
+*.ps1
+*.sh
+Makefile

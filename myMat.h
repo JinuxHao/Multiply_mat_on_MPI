@@ -1,6 +1,7 @@
 ﻿/* 矩阵相关头文件 */
 #pragma once
 #include <iostream>
+#include <cstring>
 
 typedef struct Mat {
     int H =0;

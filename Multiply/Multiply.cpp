@@ -3,7 +3,7 @@
 #include <chrono> // 计时
 #include <fstream>
 
-#include <mpi.h>
+//#include <mpi.h>
 
 using namespace std;
 
@@ -27,42 +27,46 @@ bool Write_to_txt(const char* path, Mat result);
 int main(int argc, char** argv)
 {
 	// MPI 初始化
-	int rank, size;
-	MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    const char* pathA = NULL; // 由 --pathA 指定
-    const char* pathB = NULL; // 由 --pathB 指定
-    const char* pathC = "C.txt"; // 默认输出文件路径
+	//int rank, size;
+	//MPI_Init(&argc, &argv);
+ //   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+ //   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     Mat left, right, result; // 定义三个矩阵结构体，分别用于存储左矩阵、右矩阵和结果矩阵
     const char* error = NULL; // 用于存储错误信息
     int status = 0;
+    int dims[4] = { 0 }; // 存储
 
     // 初始化矩阵
     InitMat(&left);
     InitMat(&right);
     InitMat(&result);
 
+    // 由主进程来进行初始化，参数读取等操作
+    //if (rank == 0) {
+
+    const char* pathA = NULL; // 由 --pathA 指定
+    const char* pathB = NULL; // 由 --pathB 指定
+    const char* pathC = "C.txt"; // 默认输出文件路径
+
     // 解析命令行并读取输入矩阵；返回码决定继续执行、清理后失败还是直接退出。
     bool flag = Parse_input(argc, argv, &pathA, &pathB, &pathC);
     switch (flag) {
-        case false: // 解析失败，已输出错误信息
-            goto cleanup;
-        case true: // 解析成功，继续执行
-            break;
+    case false: // 解析失败，已输出错误信息
+        goto cleanup;
+    case true: // 解析成功，继续执行
+        break;
     }
 
-	// 从指定路径读取矩阵A和B；若失败则输出错误信息并跳转到清理环节。
+    // 从指定路径读取矩阵A和B；若失败则输出错误信息并跳转到清理环节。
     if (!ReadMat(pathA, &left)) {
-		cerr << "error: failed to read matrix A from " << pathA << endl;
-		goto cleanup;
+        cerr << "error: failed to read matrix A from " << pathA << endl;
+        goto cleanup;
     }
 
     if (!ReadMat(pathB, &right)) {
-		cerr << "error: failed to read matrix B from " << pathB << endl;
-		goto cleanup;
+        cerr << "error: failed to read matrix B from " << pathB << endl;
+        goto cleanup;
     }
 
     // 为result矩阵分配空间
@@ -70,6 +74,7 @@ int main(int argc, char** argv)
         cerr << "error: failed to allocate memory for result matrix " << left.H << "x" << right.W << endl;
         goto cleanup;
     }
+
 
     // 执行矩阵乘法并计时；计时变量放在独立作用域，避免 goto cleanup 跨过初始化
     {
@@ -106,8 +111,14 @@ cleanup: // 清理资源环节，确保无论成功还是失败都能释放内�
 
 bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC){
     // 处理命令行参数，只接受 --pathA、--pathB、[--pathC] 和 -h/--help
-    // 先判断 argc，避免无参数运行时 argv[1] 为 NULL 导致崩溃。
-    if (argc <= 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+    // 没有参数：显示用法，不访问 argv[1]
+    if (argc == 1) {
+        Usage();
+        return false;
+    }
+
+    // 帮助参数：此时已确认 argv[1] 存在
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||strcmp(argv[1], "--help") == 0)) {
         Usage();
         return false;
     }
