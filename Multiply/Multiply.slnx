@@ -3,5 +3,7 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Multiply.vcxproj" Id="33708c1e-0ba1-4747-b3c7-4114095c2d23" />
+  <Project Path="Multiply_mpi/Multiply_mpi.vcxproj" Id="794a3bf5-4c2e-4e96-8fb6-3a58d7eaf4ff" />
+  <Project Path="Multiply_omp/Multiply_omp.vcxproj" Id="33708c1e-0ba1-4747-b3c7-4114095c2d23" />
+  <Project Path="Multiply_serial/Multiply_serial.vcxproj" Id="2e0a0795-8c49-4a9e-83cf-7a46c1d62828" />
 </Solution>

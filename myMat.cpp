@@ -2,9 +2,7 @@
 #include <fstream>
 
 #include <random> // 用于生成随机数
-#include "./Generate/progress_bar.h"
-
-#include <omp.h> // 乘积函数可能需要并行化
+#include "./Generate/progress_bar.h" // 用于显示进度条
 
 using namespace std;
 
@@ -156,33 +154,6 @@ void ReleaseMat(Mat* matrix)
     matrix->H = 0;
     matrix->W = 0;
     matrix->data = NULL;
-}
-
-int MultiplyMat(const Mat* left, const Mat* right, Mat* result)
-{
-    /*先对右乘矩阵进行转置，方便按行访问 */
-    Mat rightT;
-    InitMat(&rightT);
-    rightT = Transpose((Mat*)right);
-    if (rightT.data == NULL)
-        return 0;
-
-    //开始计算矩阵乘法
-    //#pragma omp parallel for
-    for (int i = 0; i < left->H; i++) {
-        if (i == 0) // 在第一行输出线程数，便于调试和性能分析
-			cout << "Using " << omp_get_num_threads() << " threads for multiplication." << endl;
-        for (int j = 0; j < rightT.H; j++) {
-            float sum = 0.0;
-            for (int k = 0; k < left->W; k++) {
-                sum += left->data[i][k] * rightT.data[j][k];
-            }
-            result->data[i][j] = sum;
-        }
-    }
-
-    ReleaseMat(&rightT); // 释放转置矩阵的内存
-    return 1;
 }
 
 Mat GenMat(int height, int width, float min, float max, const char* label)

@@ -15,16 +15,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Multiply.cpp">
+    <ClCompile Include="..\Multiply_mpi.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\myMat.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\myMat.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
   </ItemGroup>
 </Project>

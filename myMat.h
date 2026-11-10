@@ -32,8 +32,6 @@ int AllocMat(Mat* matrix, int height, int width);
 /* 逐行释放数据和行指针数组，然后恢复空矩阵状态 */
 void ReleaseMat(Mat* matrix);
 
-/* 对两个矩阵进行乘法运算。成功返回 1；失败返回 0。 */
-int MultiplyMat(const Mat* left, const Mat* right, Mat* result);
-
+/* 生成一个指定尺寸和数值范围的随机矩阵。成功返回 1；失败返回 0 */
 Mat GenMat(int height, int width, float min, float max,
     const char* label = NULL);

@@ -1,53 +1,44 @@
 ﻿
 #include "../myMat.h"
 #include <chrono> // 计时
+#include <iostream>
 #include <fstream>
-
-//#include <mpi.h>
 
 using namespace std;
 
 /* 输出用法 */
 static void Usage()
 {
-    cout<<"Usage: ./Multiply --pathA <matrix_a> --pathB <matrix_b> [--pathC <output_file>]"<<endl;
-    cout<<"       ./Multiply -h|--help"<<endl;
-    cout<<"Reads A and B from the given text files; --pathC defaults to C.txt."<<endl;
-    cout<<"Generate and save A/B beforehand with Mat_Generator/Mat_Generator.cpp."<<endl;
-    cout<<"Files start with H W and then rows."<<endl;
-    cout<<"Example: ./Multiply --pathA A.bin --pathB B.bin --pathC C.txt"<<endl;
+    cout << "Usage: ./Multiply_serial --pathA <matrix_a> --pathB <matrix_b> [--pathC <output_file>]" << endl;
+    cout << "       ./Multiply_serial -h|--help" << endl;
+    cout << "Reads A and B from the given text files; --pathC defaults to C.txt." << endl;
+    cout << "Generate and save A/B beforehand with Mat_Generator/Mat_Generator.cpp." << endl;
+    cout << "Files start with H W and then rows." << endl;
+    cout << "Example: ./Multiply_serial --pathA A.bin --pathB B.bin --pathC C.txt" << endl;
 }
 
 // 解析命令行参数，读取输入矩阵并分配结果矩阵
 bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC);
+
+int MultiplyMat(const Mat* left, const Mat* rightT, Mat* result);
 
 // 输出矩阵函数，将结果矩阵保存为txt文件
 bool Write_to_txt(const char* path, Mat result);
 
 int main(int argc, char** argv)
 {
-	// MPI 初始化
-	//int rank, size;
-	//MPI_Init(&argc, &argv);
- //   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
- //   MPI_Comm_size(MPI_COMM_WORLD, &size);
+    const char* pathA = NULL; // 由 --pathA 指定
+    const char* pathB = NULL; // 由 --pathB 指定
+    const char* pathC = "C.txt"; // 默认输出文件路径
 
     Mat left, right, result; // 定义三个矩阵结构体，分别用于存储左矩阵、右矩阵和结果矩阵
     const char* error = NULL; // 用于存储错误信息
     int status = 0;
-    //int dims[4] = { 0 }; // 存储
 
     // 初始化矩阵
     InitMat(&left);
     InitMat(&right);
     InitMat(&result);
-
-    // 由主进程来进行初始化，参数读取等操作
-    //if (rank == 0) {
-
-    const char* pathA = NULL; // 由 --pathA 指定
-    const char* pathB = NULL; // 由 --pathB 指定
-    const char* pathC = "C.txt"; // 默认输出文件路径
 
     // 解析命令行并读取输入矩阵；返回码决定继续执行、清理后失败还是直接退出。
     bool flag = Parse_input(argc, argv, &pathA, &pathB, &pathC);
@@ -75,24 +66,27 @@ int main(int argc, char** argv)
         goto cleanup;
     }
 
+    status = 1; // 成功执行到此处，设置状态码为1表示前端流程成功
 
     // 执行矩阵乘法并计时；计时变量放在独立作用域，避免 goto cleanup 跨过初始化
     {
-		cout << "Multiplying matrix A (" << left.H << "x" << left.W << ") by matrix B (" << right.H << "x" << right.W << ") ...\n"; 
+        cout << "Multiplying matrix A (" << left.H << "x" << left.W << ") by matrix B (" << right.H << "x" << right.W << ") ...\n";
         auto start = chrono::high_resolution_clock::now();
-        MultiplyMat(&left, &right, &result);
+		// 先对右乘矩阵进行转置，方便按行访问
+		Mat rightT = Transpose(&right);
+
+        MultiplyMat(&left, &rightT, &result);
         auto end = chrono::high_resolution_clock::now();
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
-		cout << "Matrix multiplication completed in " << duration.count()/1000000.0 << "seconds" << endl;
+        cout << "Matrix multiplication completed in " << duration.count() / 1000000.0 << "seconds" << endl;
 
     }
 
-	// 将结果矩阵写入指定路径的txt文件；若失败则输出错误信息并跳转到清理环节。
-	if (!Write_to_txt(pathC, result)) {
-		cerr << "error: failed to write result matrix to " << pathC << endl;
-		goto cleanup;
-	}
-	status = 1; // 成功执行到此处，设置状态码为1表示成功
+    if (!Write_to_txt(pathC, result)) {
+        cerr << "error: failed to write result matrix to " << pathC << endl;
+        goto cleanup;
+    }
+    status = 1; // 成功执行到此处，设置状态码为1表示成功
 
 
 cleanup: // 清理资源环节，确保无论成功还是失败都能释放内存和关闭文件
@@ -109,7 +103,7 @@ cleanup: // 清理资源环节，确保无论成功还是失败都能释放内�
 }
 
 
-bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC){
+bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC) {
     // 处理命令行参数，只接受 --pathA、--pathB、[--pathC] 和 -h/--help
     // 没有参数：显示用法，不访问 argv[1]
     if (argc == 1) {
@@ -118,7 +112,7 @@ bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, 
     }
 
     // 帮助参数：此时已确认 argv[1] 存在
-    if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||strcmp(argv[1], "--help") == 0)) {
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
         Usage();
         return false;
     }
@@ -153,13 +147,29 @@ bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, 
         return false;
     }
 
-	return true;
+    return true;
 }
+
+int MultiplyMat(const Mat* left, const Mat* rightT, Mat* result)
+{
+    //开始计算矩阵乘法，要求右矩阵已经转置，即左右矩阵的行数相等
+    for (int i = 0; i < left->H; i++) {
+        for (int j = 0; j < rightT->H; j++) {
+            float sum = 0.0;
+            for (int k = 0; k < left->W; k++) 
+                sum += left->data[i][k] * rightT->data[j][k];
+            result->data[i][j] = sum;
+        }
+    }
+
+    return 1;
+}
+
 
 bool Write_to_txt(const char* path, Mat result)
 {
-	ofstream myout(path, ios::out);
-    
+    ofstream myout(path, ios::out);
+
     if (!myout.is_open()) {
         cerr << "error: failed to open file " << path << " for writing." << endl;
         return false;
@@ -177,5 +187,6 @@ bool Write_to_txt(const char* path, Mat result)
     }
 
     myout.close();
+	cout << "Result matrix written to " << path << endl;
     return true;
 }
