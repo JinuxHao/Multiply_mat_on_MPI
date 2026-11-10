@@ -94,6 +94,31 @@ int WriteMat(const char* path, Mat matrix, const char* label)
     
 }
 
+bool Write_to_txt(const char* path, Mat result)
+{
+    ofstream myout(path, ios::ate | ios::out); // 
+
+    if (!myout.is_open()) {
+        cerr << "error: failed to open file " << path << " for writing." << endl;
+        return false;
+    }
+
+    // 写入矩阵的维度
+    myout << result.H << endl << result.W << endl;
+
+    // 写入矩阵的元素
+    for (int i = 0; i < result.H; i++) {
+        for (int j = 0; j < result.W; j++) {
+            myout << result.data[i][j] << " ";
+        }
+        myout << endl;
+    }
+
+    myout.close();
+    cout << "Result matrix written to " << path << endl;
+    return true;
+}
+
 int ReadMat(const char* path, Mat* matrix)
 {
 	cout << "Reading matrix from " << path << " ...\n";
