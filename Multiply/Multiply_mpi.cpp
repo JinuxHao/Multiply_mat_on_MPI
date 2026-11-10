@@ -1,177 +1,206 @@
-#include "../myMat.h"
+﻿#include "../myMat.h"
+#include "args_parser.h"
+
 #include <mpi.h>
 
-#include <vector> 
+#include <algorithm>
+#include <exception>
+#include <iomanip>
+#include <cstring>
 #include <iostream>
+#include <limits>
+#include <vector>
 
 using namespace std;
 
-/* 输出用法 */
 static void Usage()
 {
-    cout << "Usage: ./Multiply_mpi --pathA <matrix_a> --pathB <matrix_b> [--pathC <output_file>]" << endl;
-    cout << "       ./Multiply_mpi -h|--help" << endl;
-    cout << "Reads A and B from the given text files; --pathC defaults to C.txt." << endl;
-    cout << "Generate and save A/B beforehand with Mat_Generator/Mat_Generator.cpp." << endl;
-    cout << "Files start with H W and then rows." << endl;
-    cout << "Example: ./Multiply_mpi --pathA A.bin --pathB B.bin --pathC C.txt" << endl;
+    cout << "Usage: mpiexec -n <processes> ./multiply_mpi --pathA <matrix_a>"
+        << " --pathB <matrix_b> [--pathC <output_file>]\n"
+        << "       multiply_mpi -h|--help\n"
+        << "Rank 0 reads binary A and B and writes a text result (default: C.txt).\n"
+        << "Example: mpiexec -n 4 ./multiply_mpi --pathA A.bin --pathB B.bin --pathC C.txt\n";
 }
 
-// 解析命令行参数，读取输入矩阵并分配结果矩阵
-bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC);
-
-
-int main(int argc, char** argv)
+int main(int argc, char* argv[])
 {
-    int rank = 0, size = 1;
+    // 初始化 MPI，获取当前进程编号和进程总数。
     MPI_Init(&argc, &argv);
+    int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+	int inputStatus = 0; // 0: 未就绪，1: 就绪，2: 帮助
 
+    // 由 0 号进程解析参数、读入矩阵并验证维度。
+    const char* pathC = nullptr;
     Mat left, right;
-    InitMat(&left); InitMat(&right);
-
-    int dims[4] = { 0, 0, 0, 0 };
-    int flag = 0;
-	const char* pathC = "C.txt"; // 默认输出文件路径
 
     if (rank == 0) {
-        // 查看使用到的进程数
-		cout << "MPI size: " << size << endl;
-
-        //只让 0 号读文件，再广播
-		const char* pathA = NULL, * pathB = NULL;
-        flag = Parse_input(argc, argv, &pathA, &pathB, &pathC);
-		if (!flag || !ReadMat(pathA, &left) || !ReadMat(pathB, &right)) {
-			// 读取失败，通知其他 rank 并退出
-            MPI_Abort(MPI_COMM_WORLD, 1); 
-        }
-        dims[0] = left.H; 
-        dims[1] = left.W; 
-        dims[2] = right.H; 
-        dims[3] = right.W;
-    }
-
-    // 广播flag
-    MPI_Bcast(&flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    if (!flag) { 
-        if (rank == 0) 
-            cerr << "error: read failed\n"; 
-        MPI_Abort(MPI_COMM_WORLD, 1); 
-    }
-
-	// 广播矩阵维度
-    MPI_Bcast(dims, 4, MPI_INT, 0, MPI_COMM_WORLD);
-    const int H = dims[0], K = dims[1], W = dims[3];      // C: H x W
-    if (rank != 0) { 
-		// 其他 rank 分配矩阵空间
-        cout << "Rank " << rank << ": ";
-        AllocMat(&left, dims[0], dims[1]); 
-        AllocMat(&right, dims[2], dims[3]); 
-    }
-
-    // 按行广播（Mat 是 float**）
-    for (int i = 0; i < dims[0]; ++i)
-        MPI_Bcast(left.data[i], dims[1], MPI_FLOAT, 0, MPI_COMM_WORLD);
-    for (int i = 0; i < dims[2]; ++i)
-        MPI_Bcast(right.data[i], dims[3], MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-    // 行分块（前 rem 个 rank 各多一行）
-    const int base = H / size, rem = H % size;
-    const int localRows = base + (rank < rem ? 1 : 0);
-    const int startRow = rank * base + min(rank, rem);
-
-    vector<int> counts(size), displs(size);
-    for (int r = 0, off = 0; r < size; ++r) {
-        int rows = base + (r < rem ? 1 : 0);
-        counts[r] = rows * W;  displs[r] = off;  off += rows * W;
-    }
-
-    // 每个 rank 自己转置 B（也可 0 号转置后广播 B^T）
-    Mat rightT = Transpose(&right);
-    if (rightT.data == NULL) 
-        MPI_Abort(MPI_COMM_WORLD, 1);
-
-    // 计算本地行块（保留 OpenMP 就得到 MPI+OpenMP 混合）
-    vector<float> local(max<size_t>(1, (size_t)localRows * W), 0.0f);
-//#pragma omp parallel for
-    for (int li = 0; li < localRows; ++li) {
-        const int i = startRow + li;
-        for (int j = 0; j < W; ++j) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; ++k)
-                sum += left.data[i][k] * rightT.data[j][k];
-            local[(size_t)li * W + j] = sum;
-        }
-    }
-
-    //汇总到 0 号（注意 counts=0 的 rank 也要合法指针）
-    vector<float> all;
-    if (rank == 0) all.resize((size_t)H * W);
-    MPI_Gatherv(local.data(), localRows * W, MPI_FLOAT,
-        rank == 0 ? all.data() : (float*)NULL,
-        counts.data(), displs.data(), MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-    // 8) 只有 0 号写文件（多进程同时写会互相截断）
-    if (rank == 0) {
-        Mat result; InitMat(&result);
-        if (AllocMat(&result, H, W)) {
-            for (int i = 0; i < H; ++i)
-                for (int j = 0; j < W; ++j)
-                    result.data[i][j] = all[(size_t)i * W + j];
-            Write_to_txt(pathC, result);
-        }
-        ReleaseMat(&result);
-    }
-
-    ReleaseMat(&left); ReleaseMat(&right); ReleaseMat(&rightT);
-    MPI_Finalize();                     // 9) 所有 rank 必须且只能调用一次
-    return 0;
-}
-
-bool Parse_input(int argc, char** argv, const char** pathA, const char** pathB, const char** pathC) {
-    // 处理命令行参数，只接受 --pathA、--pathB、[--pathC] 和 -h/--help
-    // 没有参数：显示用法，不访问 argv[1]
-    if (argc == 1) {
-        Usage();
-        return false;
-    }
-
-    // 帮助参数：此时已确认 argv[1] 存在
-    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        Usage();
-        return false;
-    }
-
-    /* 按名称读取参数，拒绝未知、重复、缺值和位置参数。 */
-    for (int i = 1; i < argc; i += 2) {
-        if (strcmp(argv[i], "--pathA") == 0) {
-            *pathA = argv[i + 1];
-        }
-        else if (strcmp(argv[i], "--pathB") == 0) {
-            *pathB = argv[i + 1];
-        }
-        else if (strcmp(argv[i], "--pathC") == 0) {
-            *pathC = argv[i + 1];
-        }
-        else {
-            fprintf(stderr, "error: invalid argument format\n");
+        const char* pathA = nullptr;
+        const char* pathB = nullptr;
+        if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
             Usage();
-            break;
+            inputStatus = 2;
+        } 
+        else if (!Parse_arg(argc, argv, &pathA, &pathB, &pathC)) {
+            Usage();
+        } 
+        else if (ReadMat(pathA, &left) && ReadMat(pathB, &right)) 
+		{
+            if (left.W != right.H) 
+                cerr << "error: incompatible matrix dimensions " << left.H << 'x' << left.W << " and " << right.H << 'x' << right.W << '\n';
+            else {
+                inputStatus = 1;
+            }
         }
     }
 
-    if (!*pathA || !*pathB) {
-        fprintf(stderr, "error: --pathA and --pathB are required\n");
-        Usage();
-        return false;
+    // 3. 同步输入状态，确保所有进程一起继续或退出。
+    MPI_Bcast(&inputStatus, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	if (inputStatus != 1) { // 不是就绪状态，退出
+        ReleaseMat(&left);
+        ReleaseMat(&right);
+        MPI_Finalize();
+        return inputStatus == 2 ? 0 : 1; // 
     }
 
-    /* 输出文件不能覆盖输入文件，否则写入会破坏输入的文本文件。 */
-    if (strcmp(*pathC, *pathA) == 0 || strcmp(*pathC, *pathB) == 0) {
-        cerr << "output path must differ from input paths" << endl;
-        return false;
+    // 同步各进程的计时起点，输入读取已经完成。
+    MPI_Barrier(MPI_COMM_WORLD);
+    const double start = MPI_Wtime();
+
+	int dims[3] = { left.H, left.W, right.W }; //已确定左矩阵列数==右矩阵行数
+    // 广播矩阵维度，让每个进程知道 A、B 和 C 的形状。
+    MPI_Bcast(dims, 3, MPI_INT, 0, MPI_COMM_WORLD);
+    const int rows = dims[0], inner = dims[1], cols = dims[2];
+    if (rank == 0) { // 查看 MPI 进程数
+        cout << "MPI processes: " << size << endl;
+		cout << "Matrix A: " << rows << 'x' << inner << ", Matrix B: " << inner << 'x' << cols
+			<< ", Matrix C: " << rows << 'x' << cols << endl;
     }
 
-    return true;
+    // 按行分工，base 是每个进程平均分配的行数，remainder 是余数。
+    const int base = rows / size, remainder = rows % size;
+	const int localRows = base + (rank < remainder ? 1 : 0); // 当前进程负责的行数
+
+	// aCounts: 每个进程接收的 A 元素个数，aOffsets: 每个进程接收的 A 起始位置
+    vector<int> aCounts, aOffsets, cCounts, cOffsets;
+	// packedA: 0 号进程打包的 A，localA: 当前进程接收的 A
+    // Bt: B 的转置，
+    // localC: 当前进程计算出的 C，gatheredC: 0 号进程收集的 C
+    vector<float> packedA, localA, Bt, localC, gatheredC;
+
+    // 分配计算缓冲区，0 号进程准备连续的发送和接收数据。
+    int localFailure = 0; 
+
+	// 各个进程分配自己的 A 和 C 元素缓冲区，若 localRows 为 0，则分配 1 个元素以避免传入空指针。
+	// 规模为 localRows * inner/cols 意思是每个进程负责的 A 行数乘以 A 的列数，和 C 行数乘以 C 的列数。
+	localA.resize(max(1, localRows * inner)); 
+    localC.resize(max(1, localRows * cols));
+
+    if (rank == 0) {
+        // 主进程按照进程数size 计算 A 分发和 C 回收所需的元素个数及位移。
+        aCounts.resize(size);
+        aOffsets.resize(size);
+        cCounts.resize(size);
+        cOffsets.resize(size);
+        for (int process = 0, first = 0; process < size; ++process) {
+			//first: 当前进程负责的 A 的起始行号，count: 当前进程负责的 A 的行数
+            const int count = base + (process < remainder ? 1 : 0);
+            aCounts[process] = count * inner;
+            aOffsets[process] = first * inner;
+            cCounts[process] = count * cols;
+            cOffsets[process] = first * cols;
+            first += count;
+        }
+
+        // Mat 的每一行独立分配，先把 A 打包到连续缓冲区。
+        packedA.resize(rows * inner);
+        for (int i = 0; i < rows; ++i)
+			for (int j = 0; j < inner; ++j)
+				packedA[i * inner + j] = left.data[i][j];
+		// 释放 A 的行指针和数据，避免重复释放。
+        ReleaseMat(&left);
+    }
+
+    // 每个进程分配 B 的转置缓冲区，0 号进程填入转置数据。
+    Bt.resize(inner * cols);
+    if (rank == 0) {
+		Mat rightT = Transpose(&right); // 先转置 B，方便后续计算
+		for (int i = 0; i < rightT.H; i++)
+			for (int j = 0; j < rightT.W; j++)
+				Bt[i * rightT.W + j] = rightT.data[i][j];
+		// 分配完毕，释放 B和它的转置的行指针和数据，避免重复释放。
+		ReleaseMat(&rightT);
+        ReleaseMat(&right);
+    }
+
+	if (rank == 0) {
+		// 0 号进程分配 gatheredC 用于收集各进程的结果。
+		gatheredC.resize(rows * cols);
+	}
+
+    // 汇总各进程的缓冲区分配状态，有失败就一起退出。
+    int anyFailure = 0;
+    MPI_Allreduce(&localFailure, &anyFailure, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (anyFailure != 0) {
+        ReleaseMat(&left);
+        ReleaseMat(&right);
+        MPI_Finalize();
+        return 1;
+    }
+
+    // 分发 A 的行块，每个进程只接收自己负责的行。
+    MPI_Scatterv(packedA.data(), aCounts.data(), aOffsets.data(), MPI_FLOAT, localA.data(), localRows * inner, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+	vector<float>().swap(packedA); // 释放 packedA，避免占用内存
+
+    // 广播 B 的转置矩阵，供各进程计算局部乘积。
+    MPI_Bcast(Bt.data(), inner * cols, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    // 每个进程计算自己负责的 C 行块。
+    for (int i = 0; i < localRows; ++i) {
+        const float* aRow = localA.data() + i * inner;
+        for (int j = 0; j < cols; ++j) {
+            const float* bRow = Bt.data() + j * inner;
+            float sum = 0;
+            for (int k = 0; k < inner; ++k)
+                sum += aRow[k] * bRow[k];
+            localC[i * cols + j] = sum;
+        }
+    }
+
+    // 将各进程的 C 行块按原顺序汇总到 0 号进程。
+    MPI_Gatherv(localC.data(), localRows * cols, MPI_FLOAT,
+                gatheredC.data(), cCounts.data(), cOffsets.data(), MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    // 结束计时，取所有进程的最大耗时。
+    const double localSeconds = MPI_Wtime() - start;
+    double seconds = 0;
+    MPI_Reduce(&localSeconds, &seconds, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    // 由 0 号进程写出完整结果，写出成功后报告耗时。
+    int status = 0;
+
+    if (rank == 0) {
+        cout << "Matrix multiplication completed in "<< setprecision(numeric_limits<double>::max_digits10) << seconds << " seconds\n";
+
+        vector<float*> resultRows; // 0 号进程保存 C 的行指针列表
+        resultRows.resize(rows);
+        for (int i = 0; i < rows; ++i)
+            resultRows[i] = gatheredC.data() + i * cols;
+        Mat result;
+        result.H = rows;
+        result.W = cols;
+        result.data = resultRows.data();
+        if (!Write_to_txt(pathC, result)) {
+            cerr << "error: failed to save result\n";
+            status = 1;
+        }
+        
+    }
+
+    // 同步写出状态，所有进程结束 MPI 并返回同一个退出码。
+    MPI_Bcast(&status, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Finalize();
+    return status;
 }

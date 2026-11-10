@@ -1,116 +1,108 @@
-﻿// Generate.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
-//
-
 #include "../myMat.h"
+
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <iostream>
-#include <fstream>
-#include <cstring> // 用于字符串比较
+#include <limits>
+
 using namespace std;
 
-static void Usage() {
-	cout << "Usage: ./Generate --pathA <path_to_matrix_A> --pathB <path_to_matrix_B> --heightA <height_of_matrix_A> " << endl;
-	cout<<"--widthA <width_of_matrix_A> --heightB <height_of_matrix_B> --widthB <width_of_matrix_B> --min <min_value> --max < max_value>" << endl;
-	cout << "Example: ./Generate --pathA A.bin --pathB B.bin --heightA 100 --widthA 200 --heightB 200 --widthB 100 --min -1 --max 1" << endl;
+static void Usage(ostream& out)
+{
+    out << "Usage: generate --pathA <file> --pathB <file> --heightA <rows> --widthA <cols>\n"
+        << "                --heightB <rows> --widthB <cols> --min <int> --max <int>\n"
+        << "       generate -h|--help\n"
+        << "Example: ./generate --pathA A.bin --pathB B.bin --heightA 100 --widthA 200"
+        << " --heightB 200 --widthB 100 --min -1 --max 1\n";
 }
 
-bool Parse_input(int argc, char* argv[], int* heightA, int* widthA, int* heightB, int* widthB, int* min, int* max, const char** pathA, const char** pathB);
+static bool ParseInt(const char* value, int& result)
+{
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || errno == ERANGE ||
+        parsed < numeric_limits<int>::min() || parsed > numeric_limits<int>::max()) {
+        return false;
+    }
+    result = static_cast<int>(parsed);
+    return true;
+}
+
+static bool GenerateAndWrite(int height, int width, int min, int max, const char* path,
+                             const char* generateLabel, const char* writeLabel)
+{
+    Mat matrix = GenMat(height, width, static_cast<float>(min), static_cast<float>(max), generateLabel);
+    if (matrix.data == nullptr)
+        return false;
+    const bool saved = WriteMat(path, matrix, writeLabel);
+    ReleaseMat(&matrix);
+    return saved;
+}
 
 int main(int argc, char* argv[])
 {
-	int heightA  , widthA ;
-	int heightB , widthB ;
-	int min , max ;
-	const char* pathA = NULL, *pathB = NULL;
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+        Usage(cout);
+        return 0;
+    }
 
-	// 解析命令行参数
-	bool flag = Parse_input(argc, argv, &heightA, &widthA, &heightB, &widthB, &min, &max, &pathA, &pathB);
-	if (!flag) {
-		cerr << "Parsing input failed. Please check the command line arguments." << endl;
-		Usage();
-		return 0;
-	}
+    enum Option { PathA, PathB, HeightA, WidthA, HeightB, WidthB, Min, Max, OptionCount };
+    const char* const names[OptionCount] = {
+        "--pathA", "--pathB", "--heightA", "--widthA", "--heightB", "--widthB", "--min", "--max"
+    };
+    const char* values[OptionCount] = {};
+    for (int i = 1; i < argc; i += 2) {
+        int option = 0;
+        while (option < OptionCount && strcmp(argv[i], names[option]) != 0)
+            ++option;
+        if (option == OptionCount || values[option] != nullptr || i + 1 == argc ||
+            argv[i + 1][0] == '\0' || strncmp(argv[i + 1], "--", 2) == 0) {
+            cerr << "error: unknown or duplicate argument, or missing value for " << argv[i] << '\n';
+            Usage(cerr);
+            return 1;
+        }
+        values[option] = argv[i + 1];
+    }
 
-	Mat tmp_mat; // 定义一个临时矩阵结构体，用于存储生成的矩阵数据
+    for (int option = 0; option < OptionCount; ++option) {
+        if (values[option] == nullptr) {
+            cerr << "error: missing required option " << names[option] << '\n';
+            Usage(cerr);
+            return 1;
+        }
+    }
 
-	// 为矩阵A分配内存
-	if (!AllocMat(&tmp_mat, heightA, widthA)) {
-		cerr << "Failed to allocate memory for matrix A." << endl;
-		return 0;
-	};
+    int dimensionsAndBounds[OptionCount] = {};
+    for (int option = HeightA; option < OptionCount; ++option) {
+        if (!ParseInt(values[option], dimensionsAndBounds[option]) ||
+            (option <= WidthB && dimensionsAndBounds[option] <= 0)) {
+            cerr << "error: invalid integer for " << names[option] << '\n';
+            return 1;
+        }
+    }
 
-	// 生成矩阵A
-	tmp_mat = GenMat(heightA, widthA, min, max, "Generating matrix A");
-	if (tmp_mat.data == NULL) {
-		cerr << "Failed to generate matrix A." << endl;
-		return 0;
-	}
+    const int min = dimensionsAndBounds[Min];
+    const int max = dimensionsAndBounds[Max];
+    if (min >= max) {
+        cerr << "error: --min must be smaller than --max\n";
+        return 1;
+    }
+    if (strcmp(values[PathA], values[PathB]) == 0) {
+        cerr << "error: --pathA and --pathB must differ\n";
+        return 1;
+    }
 
-	// 将矩阵A写入指定路径
-	if (!WriteMat(pathA, tmp_mat, "Writing matrix A")) {
-		cerr << "Failed to write matrix A to file." << endl;
-		return 0;
-	}
-
-	// 重置tmp_mat，以便为矩阵B分配内存
-	InitMat(&tmp_mat);
-
-	// 为矩阵B分配内存
-	if (!AllocMat(&tmp_mat, heightB, widthB)) {
-		cerr << "Failed to allocate memory for matrix B." << endl;
-		return 0;
-	};
-
-	// 生成矩阵B
-	tmp_mat = GenMat(heightB, widthB, min, max, "Generating matrix B");
-	if (tmp_mat.data == NULL) {
-		cerr << "Failed to generate matrix B." << endl;
-		return 0;
-	}
-
-	// 将矩阵B写入指定路径
-	if (!WriteMat(pathB, tmp_mat, "Writing matrix B")) {
-		cerr << "Failed to write matrix B to file." << endl;
-		return 0;
-	}
-
-	// 释放矩阵内存
-	ReleaseMat(&tmp_mat);
-	return 1;
-}
-
-
-
-bool Parse_input(int argc, char* argv[], int* heightA, int* widthA, int* heightB, int* widthB, int* min, int* max, const char** pathA, const char** pathB){
-	if (argc < 17 && (strcmp(argv[1], "-h") | strcmp(argv[1], "--help")) == 0) {
-		Usage();
-		return false;
-	}
-
-	for (int i = 1; i < argc; i+=2) {
-		if (strcmp(argv[i], "--pathA") == 0) {
-			*pathA = argv[i+1];
-		}
-		else if (strcmp(argv[i], "--pathB") == 0) {
-			*pathB = argv[i+1];
-		}
-		else if (strcmp(argv[i], "--heightA") == 0) {
-			*heightA = atoi(argv[i+1]);
-		}
-		else if (strcmp(argv[i], "--widthA") == 0) {
-			*widthA = atoi(argv[i+1]);
-		}
-		else if (strcmp(argv[i], "--heightB") == 0) {
-			*heightB = atoi(argv[i+1]);
-		}
-		else if (strcmp(argv[i], "--widthB") == 0) {
-			*widthB = atoi(argv[i+1]);
-		}
-		else if (strcmp(argv[i], "--min") == 0) {
-			*min = atoi(argv[i+1]);
-		}
-		else if (strcmp(argv[i], "--max") == 0) {
-			*max = atoi(argv[i+1]);
-		}
-	}
-	return true;
+    try {
+        const bool saved = GenerateAndWrite(dimensionsAndBounds[HeightA], dimensionsAndBounds[WidthA],
+                                            min, max, values[PathA], "Generating matrix A", "Writing matrix A") &&
+                           GenerateAndWrite(dimensionsAndBounds[HeightB], dimensionsAndBounds[WidthB],
+                                            min, max, values[PathB], "Generating matrix B", "Writing matrix B");
+        return saved ? 0 : 1;
+    } catch (const exception& error) {
+        cerr << "error: matrix generation failed: " << error.what() << '\n';
+        return 1;
+    }
 }

@@ -12,16 +12,19 @@ Mat_Multiplacation/
 ├── LICENSE
 ├── Makefile                    # Linux 构建入口
 ├── myMat.h                     # Mat 结构与矩阵操作声明
-├── myMat.cpp                   # 分配、释放、生成、读写、转置和乘法
+├── myMat.cpp                   # 分配、释放、生成、读写和转置
 ├── Generate/
 │   ├── Generate.cpp            # 矩阵对生成程序入口
 │   ├── progress_bar.h          # 终端进度条
 │   ├── Generate.slnx
 │   └── Generate.vcxproj        # Visual Studio 工程
 ├── Multiply/
-│   ├── Multiply.cpp            # 矩阵乘法、计时和 TXT 输出入口
+│   ├── Multiply_serial.cpp     # 串行入口
+│   ├── Multiply_omp.cpp        # OpenMP 入口
+│   ├── Multiply_mpi.cpp        # MPI 入口
+│   ├── args_parser.h           # 三个入口共用的参数解析
 │   ├── Multiply.slnx
-│   └── Multiply.vcxproj
+│   └── Multiply_{serial,omp,mpi}/ # 各自的 Visual Studio 工程
 ├── generate_matrices.ps1       # Windows 批量生成
 ├── generate_matrices.sh        # Linux 批量生成
 ├── benchmark_matrices.ps1      # Windows 五次重复测试
@@ -29,10 +32,12 @@ Mat_Multiplacation/
 ├── matrices/                   # 输入矩阵与生成清单
 ├── results/                    # 结果、日志及性能汇总
 ├── generate                    # Linux 编译生成的可执行文件
-└── multiply                    # Linux 编译生成的可执行文件
+├── multiply                    # Linux 串行可执行文件
+├── multiply_omp                # Linux OpenMP 可执行文件
+└── multiply_mpi                # Linux MPI 可执行文件，按需构建
 ```
 
-Linux 的 `generate`、`multiply` 与源码目录 `Generate/`、`Multiply/` 区分大小写。构建中间文件放在 `.build/`，无需将 Windows 的 `.exe`、`.vs`、`x64` 或 Visual Studio 工程配置迁移到 Linux。
+Linux 的 `generate`、`multiply` 与源码目录 `Generate/`、`Multiply/` 区分大小写。迁移到 Linux 时保留源码目录结构。Makefile 和 Bash 脚本被当前 Git 忽略规则排除，需要随源码另行同步。构建中间文件放在 `.build/`，无需将 Windows 的 `.exe`、`.vs`、`x64` 或 Visual Studio 工程配置迁移到 Linux。
 
 ## 项目说明
 
@@ -54,7 +59,7 @@ C = A × B：m × n
 | OpenMP | 共享内存多线程计算，比较不同线程数的耗时 |
 | MPI | 多进程计算，比较不同进程数及通信开销的影响 |
 
-使用同一组矩阵和相同计时范围进行比较。每对矩阵重复运行五次，记录全部耗时及算术平均值，不额外预热、不自动剔除异常值。
+使用同一组矩阵进行比较，计时范围见下文。每对矩阵重复运行五次，记录全部耗时及算术平均值，不额外预热、不自动剔除异常值。
 
 ## Quick Start
 
@@ -65,7 +70,7 @@ C = A × B：m × n
 需要 GNU make、支持 C++11 的 G++、OpenMP 运行库及 Bash 4+；MPI 实验另需相应的 MPI 开发和运行环境。
 
 ```bash
-# 编译，生成根目录的 generate 和 multiply
+# 编译，生成根目录的 generate、multiply 和 multiply_omp
 make -j4
 
 # 预览百级三对矩阵的尺寸及生成命令
@@ -79,60 +84,30 @@ bash ./generate_matrices.sh --levels hundreds --seed 42 \
 # 检查配对和五次运行计划，不执行乘法
 bash ./benchmark_matrices.sh --matrices-dir matrices_demo --dry-run
 
-# 在选择并编译好串行实现后执行基准测试
+# 使用默认的串行程序执行基准测试
 bash ./benchmark_matrices.sh --matrices-dir matrices_demo --label serial
 ```
 
 ### Windows
 
-使用 Visual Studio 的 C++ 开发环境，分别打开 `Generate/Generate.slnx`、`Multiply/Multiply.slnx` 编译两个程序。工程当前指定工具集 `v145` 和 C++20；性能实验建议统一使用 `x64 Release`。
+在 Visual Studio 中打开 Generate 和 Multiply 的解决方案。Generate 单独构建，Multiply 下三个工程分别生成 Multiply_serial.exe、Multiply_omp.exe 和 Multiply_mpi.exe。MPI 的 x64 Debug 与 x64 Release 需要 MS-MPI SDK 和运行时。OpenMP 工程使用 Visual Studio 的 OpenMP 支持。
 
-Multiply 工程配置了 OpenMP，并保留 `MSMPI_INC`、`MSMPI_LIB64`、`msmpi.lib` 等 Microsoft MPI 构建依赖。按现有工程构建时，需要让相关 SDK、库及运行环境可用；若本机没有对应工具集或 MPI 环境，应先调整构建环境。
-
-PowerShell 脚本要求 5.1 或更新版本。下面显式选择 Release 可执行文件，避免误用其他构建版本：
-
-```powershell
-.\generate_matrices.ps1 -GeneratorPath .\Generate\x64\Release\Generate.exe `
-  -Levels hundreds -Seed 42 -MatricesDir matrices_demo -DryRun
-
-.\generate_matrices.ps1 -GeneratorPath .\Generate\x64\Release\Generate.exe `
-  -Levels hundreds -Seed 42 -MatricesDir matrices_demo
-
-.\benchmark_matrices.ps1 -MultiplierPath .\Multiply\x64\Release\Multiply.exe `
-  -MatricesDir matrices_demo -Label serial
-```
-
-如果系统策略禁止直接执行脚本，可通过一次性进程参数启动，不修改系统执行策略：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\generate_matrices.ps1 -Levels hundreds -Seed 42 -MatricesDir matrices_demo
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\benchmark_matrices.ps1 -MatricesDir matrices_demo -Label serial
-```
-
-未指定可执行路径时，Windows 脚本依次查找各自的 `x64/Release`、`x64/Debug`，最后查找源码子目录下的 `.exe`，启动时会显示选择的路径。
+本次批量运行说明面向 Linux。Windows PowerShell 脚本仍采用旧默认成功码，若用于新编译的程序，需要显式传入 -SuccessExitCode 0。
 
 ## 编译与单次运行
 
 ### Makefile
 
-所有源码及输出路径均为相对路径，默认构建参数为 `-O2 -std=c++11 -Wall -Wextra -fopenmp -pthread`。生成程序也链接共享的 `myMat.cpp`，因此同样需要 OpenMP 支持。
+所有源码及输出路径均为相对路径。默认使用 C++11、-O2 和 -pthread，OpenMP 目标额外使用 -fopenmp。MPI 目标使用 MPICXX 指定的编译器，默认为 mpicxx。
 
 ```bash
-make                 # 构建两个程序
-make generate        # 只构建生成程序
-make multiply        # 只构建计算程序
-make -n              # 查看构建命令，不执行编译
-make clean           # 清理可执行程序与已知中间文件，保留矩阵和结果
+make -j4            # 构建 generate、multiply、multiply_omp
+make multiply_mpi   # 另行构建 MPI 版本
+make -n             # 查看默认构建命令
+make clean          # 清理构建产物，保留矩阵和结果
 ```
 
-Makefile 使用 `.d` 文件跟踪头文件依赖；修改 `.cpp`、`.h` 后再次 `make` 即可增量编译。切换编译器、优化选项或实验模式时，先清理再重建。MPI 实现可以使用服务器提供的 C++ 包装编译器，例如：
-
-```bash
-make clean
-make CXX=mpicxx
-```
-
-这只改变构建工具，具体的 MPI 分工、通信和结果汇总仍需由相应的源码实现。
+Makefile 使用 .d 文件跟踪头文件依赖。切换编译器或优化选项时，先清理再重建。
 
 ### 单独生成矩阵对
 
@@ -159,9 +134,9 @@ mkdir -p matrices results
 
 `--pathA`、`--pathB` 必须指定；省略 `--pathC` 时写入当前工作目录的 `C.txt`。两个程序不会自动创建输出文件的父目录，单独运行时应先创建目录，并确保 `A.width == B.height`。
 
-Windows 单次运行使用对应 `.exe`，例如 `.\Multiply\x64\Release\Multiply.exe`，参数名称相同。
+Windows 单次运行使用对应的 `.exe`，例如 `.\Multiply\x64\Release\Multiply_serial.exe`，参数名称相同。
 
-**返回码约定：当前两个 C++ 程序成功返回 `1`，失败返回 `0`；批量脚本自身则成功返回 `0`，失败返回 `1`。** 因此不要直接用 `./generate ... && ./multiply ...` 串联两个程序，也不要在启用 `set -e` 的自定义 Shell 脚本中忽略这个约定。
+生成和三个乘法程序的退出码统一为成功 `0`、失败 `1`。单独传 `-h` 或 `--help` 返回 `0`。C++ 读入、分配及写出函数用 `bool` 表示成功或失败。
 
 ## 批量矩阵生成
 
@@ -177,15 +152,15 @@ Windows 单次运行使用对应 `.exe`，例如 `.\Multiply\x64\Release\Multipl
 
 文件命名为 `A_100.bin / B_100.bin` 等。**后缀是样例编号，不代表实际阶数**；维度、形状、种子及文件名记录在输入目录的 `cases.csv` 中。相同种子、级别选择和尺寸范围可在 Windows、Linux 复现相同的尺寸安排；C++ 元素随机数独立播种，不保证复现相同元素。
 
-| 用途 | Windows 参数 | Linux 参数 | 默认值 |
-| --- | --- | --- | --- |
-| 生成程序相对路径 | `-GeneratorPath` | `--generator` | 自动查找 `.exe` / `./generate` |
-| 矩阵输出目录 | `-MatricesDir` | `--matrices-dir` | `matrices` |
-| 维度种子 | `-Seed` | `--seed` | 当前秒级时间 |
-| 规模选择 | `-Levels` | `--levels` | `all` |
-| 随机值上下界 | `-Min`、`-Max` | `--min`、`--max` | `-1`、`1` |
-| 预览 | `-DryRun` | `--dry-run` | 不启用 |
-| C++ 成功返回码 | `-SuccessExitCode` | `--success-exit-code` | `1` |
+| 用途 | Linux 参数 | 默认值 |
+| --- | --- | --- |
+| 生成程序相对路径 | `--generator` | `./generate` |
+| 矩阵输出目录 | `--matrices-dir` | `matrices` |
+| 维度种子 | `--seed` | 当前秒级时间 |
+| 规模选择 | `--levels` | `all` |
+| 随机值上下界 | `--min`、`--max` | `-1`、`1` |
+| 预览 | `--dry-run` | 不启用 |
+| C++ 成功返回码 | `--success-exit-code` | `0` |
 
 规模可选 `all`、`hundreds`、`thousands`、`ten-thousands`。完整生成示例：
 
@@ -196,7 +171,7 @@ bash ./generate_matrices.sh --seed 42
 
 所有脚本路径参数相对于脚本所在的项目根目录解析，从其他工作目录启动也适用。单独运行 C++ 程序时，路径则相对于当前工作目录。
 
-脚本会在执行前显示预期文件总字节数，并检查生成后的文件头和长度。已有同名矩阵或 `cases.csv` 时拒绝覆盖；需要另一次生成时指定新的输入目录。若要改变默认维度范围，可同步调整 PowerShell 的 `$lower`、`$upper` 和 Bash 的 `LOWER`、`UPPER`，每个区间至少包含三个不同的正整数。
+脚本会在执行前显示预期文件总字节数，并检查生成后的文件头和长度。已有同名矩阵或 `cases.csv` 时拒绝覆盖；需要另一次生成时指定新的输入目录。若要改变默认维度范围，可调整 Bash 的 `LOWER`、`UPPER`，每个区间至少包含三个不同的正整数。
 
 ## 批量性能测试
 
@@ -214,14 +189,15 @@ bash ./benchmark_matrices.sh --dry-run
 bash ./benchmark_matrices.sh --label serial
 ```
 
-| 用途 | Windows 参数 | Linux 参数 | 默认值 |
-| --- | --- | --- | --- |
-| 计算程序相对路径 | `-MultiplierPath` | `--multiplier` | 自动查找 `.exe` / `./multiply` |
-| 矩阵输入目录 | `-MatricesDir` | `--matrices-dir` | `matrices` |
-| 结果父目录 | `-ResultsDir` | `--results-dir` | `results` |
-| 实验标签 | `-Label` | `--label` | `default` |
-| 仅检查运行计划 | `-DryRun` | `--dry-run` | 不启用 |
-| C++ 成功返回码 | `-SuccessExitCode` | `--success-exit-code` | `1` |
+| 用途 | Linux 参数 | 默认值 |
+| --- | --- | --- |
+| 计算程序相对路径 | `--multiplier` | `./multiply` |
+| 矩阵输入目录 | `--matrices-dir` | `matrices` |
+| 结果父目录 | `--results-dir` | `results` |
+| 实验标签 | `--label` | `default` |
+| 仅检查运行计划 | `--dry-run` | 不启用 |
+| C++ 成功返回码 | `--success-exit-code` | `0` |
+| MPI 进程数 | `--mpi-processes` | 不启用，指定时要求显式传 `--multiplier` |
 
 标签允许英文字母、数字、下划线和连字符，不会改变线程数、进程数或算法实现。脚本遇到某次计算失败、结果无效、计时缺失或重复时，会记录失败并继续后续次数；失败项耗时留空，整批最终返回非零状态。五次未全部成功的矩阵对不填写平均值。
 
@@ -249,43 +225,39 @@ CSV 使用 UTF-8、逗号分隔，可在 Excel 中打开；耗时单位统一为
 
 ### 计时范围
 
-当前计算程序对 `MultiplyMat` 调用进行计时，输出格式为：
+三种实现成功后输出一条内部耗时记录。
 
 ```text
-Matrix multiplication completed in 0.123seconds
+Matrix multiplication completed in 0.123 seconds
 ```
 
-脚本支持科学计数法和数值与 `seconds` 之间的空格。记录的是程序报告的内部耗时，包含该调用内的转置、分配和释放等操作，不包含输入读取、结果 TXT 写入、程序启动及脚本校验。切换 MPI 实现时，应统一计时范围，并由主进程输出一条能够代表整个并行计算阶段的计时记录。
+- 串行和 OpenMP 沿用原计时范围，从 B 转置前到矩阵乘法完成，结果矩阵在计时前分配。
+- MPI 在读入并广播尺寸后同步起点，计入计算缓冲区分配、A 打包与分发、B 转置与广播、本地计算和 C 回收。各 rank 用 MPI_Wtime 计算本地耗时，rank 0 取最大值并输出一次。
+- 进程启动、输入文件读取、结果 TXT 写入与脚本校验均在计时范围外。比较加速比时，MPI 耗时包含上述通信和准备开销。
 
 ## 三种计算方式的实验组织
 
-每次切换计算实现后重新构建，保留相同输入矩阵、优化级别及计时范围，使用不同标签保存结果。以串行平均耗时 `T_serial` 为基线，可计算加速比 `S_p = T_serial / T_p`；同口径下，效率为 `E_p = S_p / p`，其中 p 是参与比较的线程数或进程数。
+保留相同输入和编译优化级别，用不同标签保存批次。以串行平均耗时 T_serial 为基线，加速比为 T_serial / T_p，效率为加速比除以参与的线程数或进程数。
 
 ### 串行和 OpenMP
 
-在选择相应的 C++ 实现并重新编译后运行。OpenMP 线程数由环境或程序设置控制，脚本继承调用环境，不自行设置线程数。例如，测试 12 线程：
-
 ```bash
-export OMP_NUM_THREADS=12
-export OMP_DYNAMIC=FALSE
-bash ./benchmark_matrices.sh --label openmp12
-```
-
-Windows PowerShell 中对应设置为：
-
-```powershell
-$env:OMP_NUM_THREADS = '12'
-$env:OMP_DYNAMIC = 'FALSE'
-.\benchmark_matrices.ps1 -Label openmp12
+bash ./benchmark_matrices.sh --label serial
+OMP_NUM_THREADS=12 OMP_DYNAMIC=FALSE \
+  bash ./benchmark_matrices.sh --multiplier ./multiply_omp --label openmp12
 ```
 
 ### MPI
 
-MPI 模式需要同时准备相应的计算实现、MPI 编译环境和多进程启动方式。批量脚本默认直接调用指定程序，不自动添加 `mpiexec` 或决定进程数。
+rank 0 读取输入并向各进程分发各自的 A 行块。各进程用收到的 B 转置矩阵计算对应 C 行块，由 rank 0 回收和写出。
 
-Linux 上可以额外提供一个可执行的启动包装器，并通过 `--multiplier` 指向它。包装器需完整转发 `--pathA`、`--pathB`、`--pathC` 等参数；MPI 程序应由约定的进程写出最终结果和唯一计时记录，并让脚本期望的返回码与启动器实际返回码一致。
+```bash
+make multiply_mpi
+mpiexec -n 4 ./multiply_mpi --pathA matrices/A_100.bin --pathB matrices/B_100.bin
+bash ./benchmark_matrices.sh --multiplier ./multiply_mpi --mpi-processes 4 --label mpi4
+```
 
-不同 MPI 实现的进程映射和集群调度规则可能不同，应依据所在服务器配置启动命令；单纯把标签改为 `mpi4` 或使用 `mpicxx` 编译不会自动实现分布式计算。
+指定 `--mpi-processes` 时，脚本对每次运行使用 `mpiexec -n N`。需要集群专用启动方式时，用 `--multiplier` 指向可执行包装器，包装器负责启动 MPI 并转发矩阵路径参数。进程数应与调度器分配的资源相符。
 
 ## 文件格式
 
@@ -316,9 +288,6 @@ Linux 上可以额外提供一个可执行的启动包装器，并通过 `--mult
 
 ## 使用注意事项
 
-- 单独调用程序时传入完整参数。Generate 的无参数、帮助及缺值处理仍不完整，可能导致非法访问；Multiply 对参数缺值等异常输入也尚未全面校验。
-- 手动计算应先确认维度相容；批量脚本会预检，但 C++ 入口不提供同等完整的输入检查。
-- Generate 存在重复分配及部分内存未释放的情况，万级样例的峰值内存需求高于单份矩阵大小。批量生成按矩阵对启动独立进程，退出后由操作系统回收内存。
 - 万级矩阵的输入、TXT 输出和五次计算都可能耗费较多空间与时间，先预览容量并从小规模验证开始。服务器上按调度系统分配的资源运行，作业时限应覆盖读写、校验和整批计算。
 - 比较性能时固定输入和编译版本，记录线程数、进程数及节点配置；在正式测试期间避免重新编译正在使用的程序。
 - 终端进度条默认仅在 stderr 连接终端时显示。`CALMAT_PROGRESS=0` 可关闭，`CALMAT_PROGRESS=1` 可强制开启；批量测试脚本会关闭进度条并保存其他程序输出。

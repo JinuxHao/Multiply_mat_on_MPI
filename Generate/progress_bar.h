@@ -1,4 +1,4 @@
-/* 线程安全的终端进度条（header-only）。
+﻿/* 线程安全的终端进度条（header-only）。
  *
  * API 与显示风格参考 progresscpp：
  *   https://github.com/prakhar1989/progress-cpp (MIT License)
@@ -20,10 +20,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
-#include <cstdio>
+#include <iomanip>
+#include <iostream>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <sstream>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -111,8 +113,7 @@ public:
         ticks_.store(total_, std::memory_order_relaxed);
         if (last_drawn_ != total_)
             DrawLocked(total_);
-        std::fputc('\n', stderr);
-        std::fflush(stderr);
+        std::cerr << '\n';
     }
 
     /* 中途失败：保留实际进度并换行，不假装已经完成。 */
@@ -129,8 +130,7 @@ public:
             done = total_;
         if (last_drawn_ != done)
             DrawLocked(done);
-        std::fputc('\n', stderr);
-        std::fflush(stderr);
+        std::cerr << '\n';
     }
 
     bool enabled() const
@@ -147,6 +147,10 @@ private:
     ProgressBar& operator=(const ProgressBar&) = delete;
 
     /* 终端判断：显式环境变量优先，其次 isatty(2)（stderr 的 fd）。 */
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv is only used to inspect the process environment.
+#endif
     static bool EnabledOn()
     {
         const char* env = std::getenv("CALMAT_PROGRESS");
@@ -171,11 +175,14 @@ private:
 #endif
     }
 
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
     /* 调用方必须持有 mutex_。 */
     void DrawLocked(std::size_t done)
     {
         char bar[kMaxWidth + 1];
-        char line[512];
         double fraction;
         int percent, filled;
         unsigned i;
@@ -194,14 +201,12 @@ private:
         bar[width_] = '\0';
 
         elapsed = std::chrono::duration<double>(Clock::now() - started_).count();
-        std::snprintf(line, sizeof(line),
-                      "%s [%s] %3d%% %10llu/%llu %7.1fs",
-                      label_, bar, percent,
-                      (unsigned long long)done,
-                      (unsigned long long)total_, elapsed);
+        std::ostringstream line;
+        line << '\r' << label_ << " [" << bar << "] " << std::setw(3) << percent
+             << "% " << std::setw(10) << done << '/' << total_
+             << ' ' << std::fixed << std::setprecision(1) << std::setw(7) << elapsed << "s   ";
         /* 末尾空格用于覆盖上一行残留的更宽数字。 */
-        std::fprintf(stderr, "\r%s   ", line);
-        std::fflush(stderr);
+        std::cerr << line.str();
         last_drawn_ = done;
     }
 

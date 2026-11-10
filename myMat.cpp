@@ -1,213 +1,207 @@
 ﻿#include "myMat.h"
-#include <fstream>
+#include "Generate/progress_bar.h"
 
-#include <random> // 用于生成随机数
-#include "./Generate/progress_bar.h" // 用于显示进度条
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <random>
 
 using namespace std;
 
-Mat Transpose(Mat* matrix)
+Mat Transpose(const Mat* matrix)
 {
-    Mat newMatrix;
-    InitMat(&newMatrix);// 初始化新矩阵
-    if (matrix == NULL || !AllocMat(&newMatrix, matrix->W, matrix->H)) {
-		cout << "error: failed to allocate memory for transposed matrix " << endl;
-        return Mat();
+    Mat transposed;
+    if (matrix == nullptr || matrix->data == nullptr ||
+        !AllocMat(&transposed, matrix->W, matrix->H)) {
+        return {};
     }
-    for (int i = 0; i < newMatrix.H; i++)
-        for (int j = 0; j < newMatrix.W; j++)
-            newMatrix.data[i][j] = matrix->data[j][i];
 
-    return newMatrix;
+    for (int i = 0; i < transposed.H; ++i)
+        for (int j = 0; j < transposed.W; ++j)
+            transposed.data[i][j] = matrix->data[j][i];
+    return transposed;
 }
 
 void InitMat(Mat* matrix)
 {
-    matrix->H = 0;
-    matrix->W = 0;
-    matrix->data = NULL;
+    *matrix = Mat{};
 }
 
-
-int AllocMat(Mat* matrix, int height, int width)
+bool AllocMat(Mat* matrix, int height, int width)
 {
-    if (matrix == NULL || height <= 0 || width <= 0) {
-		cout << "error: invalid matrix dimensions " << height << "x" << width << endl;
-		return 0;
+    if (matrix == nullptr || height <= 0 || width <= 0 ||
+        static_cast<size_t>(height) > numeric_limits<size_t>::max() / sizeof(float*) ||
+        static_cast<size_t>(width) > numeric_limits<size_t>::max() / sizeof(float)) {
+        cerr << "error: invalid matrix allocation " << height << 'x' << width << '\n';
+        return false;
     }
 
-    cout << "Allocating matrix " << height << "x" << width << " ...\n";
+    ReleaseMat(matrix);
+    matrix->data = static_cast<float**>(calloc(static_cast<size_t>(height), sizeof(float*)));
+    if (matrix->data == nullptr) {
+        cerr << "error: failed to allocate matrix " << height << 'x' << width << '\n';
+        return false;
+    }
 
-    InitMat(matrix);
     matrix->H = height;
     matrix->W = width;
-
-	// 先分配height个行指针，再分配每行的width个float
-	matrix->data = (float**)malloc((size_t)height * sizeof(float*));//calloc 分配内存并初始化为0
-    if (matrix->data == NULL)
-        return 0;
-
-    for (int i = 0; i < height; i++) {
-		matrix->data[i] = (float*)malloc((size_t)width * sizeof(float)); //malloc 分配内存
-        if (matrix->data[i] == NULL) {
+    for (int i = 0; i < height; ++i) {
+        matrix->data[i] = static_cast<float*>(malloc(static_cast<size_t>(width) * sizeof(float)));
+        if (matrix->data[i] == nullptr) {
+            cerr << "error: failed to allocate matrix " << height << 'x' << width << '\n';
             ReleaseMat(matrix);
-            return 0;
+            return false;
         }
     }
-    return 1;
+    return true;
 }
 
-int WriteMat(const char* path, Mat matrix, const char* label)
+bool WriteMat(const char* path, Mat matrix, const char* label)
 {
-
-    if (path == NULL || matrix.data == NULL ||
-        matrix.H <= 0 || matrix.W <= 0) {
-		cerr << "error: invalid matrix or path for writing." << endl;
-        return 0;
+    if (path == nullptr || matrix.data == nullptr || matrix.H <= 0 || matrix.W <= 0) {
+        cerr << "error: invalid matrix or path for writing\n";
+        return false;
     }
 
-	ofstream myout(path, ios::out | ios::binary); // 写入二进制文件
-	if (myout.fail()) {
-		cerr << "error: failed to open file " << path << " for writing." << endl;
-		return 0;
-	}
+    ofstream output(path, ios::binary);
+    if (!output) {
+        cerr << "error: failed to open " << path << " for writing\n";
+        return false;
+    }
 
-	// 写入矩阵的高度和宽度
-	myout.write(reinterpret_cast<const char*>(&matrix.H), sizeof(int));
-	myout.write(reinterpret_cast<const char*>(&matrix.W), sizeof(int));
+    output.write(reinterpret_cast<const char*>(&matrix.H), sizeof(matrix.H));
+    output.write(reinterpret_cast<const char*>(&matrix.W), sizeof(matrix.W));
 
-    /* 写文件通常比生成更慢，所以保存阶段同样显示进度。 */
-	const size_t total = (size_t)matrix.H * (size_t)matrix.W; // 获得总元素数来显示进度条
-    ProgressBar progress(total, label); 
-    for (int row = 0; row < matrix.H; ++row) {
-        for (int column = 0; column < matrix.W; ++column) {
-			myout.write(reinterpret_cast<const char*>(&matrix.data[row][column]), sizeof(float));
-            progress.tick();
+    const size_t rowBytes = static_cast<size_t>(matrix.W) * sizeof(float);
+    ProgressBar progress(static_cast<size_t>(matrix.H) * matrix.W, label);
+    for (int row = 0; row < matrix.H && output; ++row) {
+        if (output.write(reinterpret_cast<const char*>(matrix.data[row]), rowBytes)) {
+            progress.tick(matrix.W);
             progress.display();
         }
     }
 
-    /* 只有整份文件写完才显示 100%，失败则保留实际进度。 */
+    output.close();
+    if (!output) {
+        cerr << "error: failed to write matrix to " << path << '\n';
+        return false;
+    }
     progress.done();
-
-	return 1;
-    
+    return true;
 }
 
 bool Write_to_txt(const char* path, Mat result)
 {
-    ofstream myout(path, ios::ate | ios::out); // 
-
-    if (!myout.is_open()) {
-        cerr << "error: failed to open file " << path << " for writing." << endl;
+    if (path == nullptr || result.data == nullptr || result.H <= 0 || result.W <= 0) {
+        cerr << "error: invalid result matrix or output path\n";
         return false;
     }
 
-    // 写入矩阵的维度
-    myout << result.H << endl << result.W << endl;
-
-    // 写入矩阵的元素
-    for (int i = 0; i < result.H; i++) {
-        for (int j = 0; j < result.W; j++) {
-            myout << result.data[i][j] << " ";
-        }
-        myout << endl;
+    ofstream output(path);
+    if (!output) {
+        cerr << "error: failed to open " << path << " for writing\n";
+        return false;
     }
 
-    myout.close();
-    cout << "Result matrix written to " << path << endl;
+    output << result.H << '\n' << result.W << '\n';
+    for (int i = 0; i < result.H && output; ++i) {
+        for (int j = 0; j < result.W; ++j)
+            output << result.data[i][j] << ' ';
+        output << '\n';
+    }
+
+    output.close();
+    if (!output) {
+        cerr << "error: failed to write result to " << path << '\n';
+        return false;
+    }
+    cout << "Result matrix written to " << path << '\n';
     return true;
 }
 
-int ReadMat(const char* path, Mat* matrix)
+bool ReadMat(const char* path, Mat* matrix)
 {
-	cout << "Reading matrix from " << path << " ...\n";
-
-    if (path == NULL || matrix == NULL) {
-        cerr << "error: invalid matrix or path for reading." << endl;
-        return 0;
+    if (matrix != nullptr)
+        ReleaseMat(matrix);
+    if (path == nullptr || matrix == nullptr) {
+        cerr << "error: invalid matrix or path for reading\n";
+        return false;
     }
 
-	ifstream myin(path, ios::in|ios::binary);
-	if (!myin.is_open()) {
-		cerr << "error: failed to open file " << path << endl;
-		return 0;
-	}
+    ifstream input(path, ios::binary | ios::ate);
+    if (!input) {
+        cerr << "error: failed to open " << path << " for reading\n";
+        return false;
+    }
 
+    const streamoff fileSize = input.tellg();
+    input.seekg(0);
     int height = 0, width = 0;
+    if (!input.read(reinterpret_cast<char*>(&height), sizeof(height)) ||
+        !input.read(reinterpret_cast<char*>(&width), sizeof(width)) ||
+        height <= 0 || width <= 0) {
+        cerr << "error: invalid binary matrix header in " << path << '\n';
+        return false;
+    }
 
-	//读取矩阵的高度和宽度，两个int类型
-	myin.read(reinterpret_cast<char*>(&height), sizeof(int));
-	myin.read(reinterpret_cast<char*>(&width), sizeof(int));
+    const uint64_t rowBytes = static_cast<uint64_t>(width) * sizeof(float);
+    const uint64_t expectedSize = sizeof(height) + sizeof(width) + rowBytes * height;
+    if (fileSize < 0 || static_cast<uint64_t>(fileSize) != expectedSize ||
+        rowBytes > static_cast<uint64_t>(numeric_limits<streamsize>::max())) {
+        cerr << "error: invalid binary matrix size in " << path << '\n';
+        return false;
+    }
+    if (!AllocMat(matrix, height, width))
+        return false;
 
-	if (!AllocMat(matrix, height, width)) {
-		cout << "error: failed to allocate memory for matrix " << height << "x" << width << endl;
-		myin.close();
-		return 0;
-	}
+    ProgressBar progress(static_cast<size_t>(height) * width, "Reading");
+    for (int row = 0; row < height; ++row) {
+        if (!input.read(reinterpret_cast<char*>(matrix->data[row]), static_cast<streamsize>(rowBytes))) {
+            cerr << "error: failed to read matrix data from " << path << '\n';
+            ReleaseMat(matrix);
+            return false;
+        }
+        progress.tick(width);
+        progress.display();
+    }
 
-	const size_t total = (size_t)height * (size_t)width; // 进度条按元素计数
-	ProgressBar progress(total, "Reading"); 
-	for (int row = 0; row < height; ++row) {
-		for (int column = 0; column < width; ++column) {
-			// 读取每个元素，float类型
-			myin.read(reinterpret_cast<char*>(&matrix->data[row][column]), sizeof(float));
-			progress.tick();
-			progress.display();
-		}
-	}
-
-	progress.done();
-	myin.close();
-    
-    cout << "Loaded matrix " << height << "x" << width << " from " << path << endl;
-    return 1;
+    progress.done();
+    cout << "Loaded matrix " << height << 'x' << width << " from " << path << '\n';
+    return true;
 }
 
-/* 逐行释放数据和行指针数组，然后恢复空矩阵状态。 */
 void ReleaseMat(Mat* matrix)
 {
-    int row;
-
-    if (matrix == NULL)
+    if (matrix == nullptr)
         return;
-    if (matrix->data != NULL) {
-        for (row = 0; row < matrix->H; ++row)
+    if (matrix->data != nullptr) {
+        for (int row = 0; row < matrix->H; ++row)
             free(matrix->data[row]);
         free(matrix->data);
     }
-    matrix->H = 0;
-    matrix->W = 0;
-    matrix->data = NULL;
+    InitMat(matrix);
 }
 
 Mat GenMat(int height, int width, float min, float max, const char* label)
 {
-    // 创建一个随机数生成器
     random_device rd;
     mt19937 gen(rd());
     uniform_real_distribution<float> dis(min, max);
 
-    // 初始化矩阵，尺寸非法或分配失败时返回空矩阵
     Mat matrix;
-    InitMat(&matrix);
     if (!AllocMat(&matrix, height, width))
         return matrix;
 
-    /* 进度条按元素计数，只在 stderr 是终端时显示，避免污染脚本输出。
-     * tick()/display() 都是线程安全的，将来改成多线程生成也不用改这里。 */
-    const std::size_t total = (std::size_t)height * (std::size_t)width;
-    ProgressBar progress(total, label);
-
-    // 填充随机数
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
+    ProgressBar progress(static_cast<size_t>(height) * width, label);
+    for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j)
             matrix.data[i][j] = dis(gen);
-            progress.tick();
-            progress.display();
-        }
+        progress.tick(width);
+        progress.display();
     }
-    progress.done();
 
+    progress.done();
     return matrix;
 }
